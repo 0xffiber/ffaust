@@ -1,7 +1,8 @@
 [package]
 edition = "2021"
-name = "ffiber"
+name = "ffaust"
 version = "0.1.0"
+
 [dependencies]
 default-net = "*"
 piface = "*"

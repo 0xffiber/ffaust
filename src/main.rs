@@ -310,6 +310,14 @@ fn main() {
     };
     */
 
+    println!(r"
+    ________                 __ 
+   / __/ __/___ ___  _______/ /_
+  / /_/ /_/ __ `/ / / / ___/ __/
+ / __/ __/ /_/ / /_/ (__  ) /_  
+/_/ /_/  \__,_/\__,_/____/\__/  
+    ");
+
     match env::args().nth(3) {
         Some(w) => {
             let config: Vec<String> = w.to_string().split(",").map(|s| s.to_string()).collect();

@@ -74,7 +74,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ffiber"
+name = "ffaust"
 version = "0.1.0"
 dependencies = [
  "default-net",
