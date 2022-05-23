@@ -33,7 +33,7 @@ To compile from source:
 Run the tool:
 
 ```shell
-# target/release/ffaust <IP> <PORT>
+# target/release/ffaust <IP> <PORT> [<IFACE>]
 ```
 
 ## TODO
@@ -41,6 +41,7 @@ Run the tool:
 The tool is under active development:
 
 - [ ] Proper CLI args, advanced configuration for interface(s), IP ranges, etc
+- [ ] Run multiple threads (test if this is going to be necessary againsts single IP address)
 - [ ] Logger to print progress
 - [ ] Support source IP spoofing (with flag)
 - [ ] Multiple targets (ip/port pairs), option to read config from stdin, resolve for hostnames

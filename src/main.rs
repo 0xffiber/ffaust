@@ -301,15 +301,6 @@ fn main() {
     };
     */
 
-    /*
-    let interface_name = match env::args().nth(4) {
-        Some(v) => v.parse().unwrap(),
-        None => {
-            // xxx: todo
-        }
-    };
-    */
-
     println!(r"
     ________                 __ 
    / __/ __/___ ___  _______/ /_
