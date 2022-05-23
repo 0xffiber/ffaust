@@ -35,3 +35,13 @@ Run the tool:
 ```shell
 # target/release/ffaust <IP> <PORT>
 ```
+
+## TODO
+
+The tool is under active development:
+
+- [ ] Proper CLI args, advanced configuration for interface(s), IP ranges, etc
+- [ ] Logger to print progress
+- [ ] Support source IP spoofing (with flag)
+- [ ] Multiple targets (ip/port pairs), option to read config from stdin, resolve for hostnames
+- [ ] Settings for number of worker threads & total execution time
