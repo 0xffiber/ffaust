@@ -1,4 +1,4 @@
-# MLPS "Faust"
+# MLPS "FFaust"
 
 (Multiple Launch Packet System)
 
@@ -10,11 +10,11 @@
 \____/_/|_/_/ /_/    /_/  \__,_/\__,_/____/\__/  
 ```
 
-A high performance TCP SYN flooding tool. By operating directly with ethernet packets to bypass kernel TCP stack, `ffaust` achieves up to 2.5M pps (packets per second) on a single machine.
+High-performance TCP SYN flooding tool. `ffaust` manipulates ethernet packets directly and achieves up to 2.5M pps (packets per second) on a single machine.
 
 ## Disclaimer
 
-"ffaust' is a stress testing tool and it is not to be used on targets that you do not have explicit consent to attack.
+MLPS "FFaust" is a stress testing tool and it is not to be used on targets that you do not have explicit consent to attack.
 
 ## Attack vector
 
