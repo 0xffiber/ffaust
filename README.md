@@ -10,7 +10,7 @@
 \____/_/|_/_/ /_/    /_/  \__,_/\__,_/____/\__/  
 ```
 
-High-performance TCP SYN flooding tool. `ffaust` manipulates ethernet packets directly and achieves up to 2.5M pps (packets per second) on a single machine.
+High-performance TCP SYN flooding tool. `ffaust` manipulates packets directly on Ethernet layer and achieves up to 2.5M pps (packets per second) on a single machine.
 
 ## Disclaimer
 
