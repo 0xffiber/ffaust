@@ -94,6 +94,7 @@ pub fn build_packet(config: &Config, tmp_packet: &mut [u8]) {
     // let iface_ip_index = (rand::random::<f32>() * config.ipv4.len() as f32).floor() as usize;
     // let iface_ip = config.ipv4[iface_ip_index].addr;
 
+    // XXX: keep configuration for IP spoofing
     let iface_ip = config.iface_ip;
 
     // setup Ethernet header
@@ -167,16 +168,13 @@ pub fn repurpose_packet(config: &Config, tmp_packet: &mut [u8]) {
             MutableTcpPacket::new(&mut tmp_packet[(ETHERNET_HEADER_LEN + IPV4_HEADER_LEN)..])
                 .unwrap();
 
-        // XXX: this should be in the range 32000-61000
         tcp_header.set_source(rand::random::<u16>());
-        /*
         let checksum = tcp::ipv4_checksum(
             &tcp_header.to_immutable(),
             &config.iface_ip,
             &config.destination_ip,
         );
         tcp_header.set_checksum(checksum);
-        */
     }
 }
 
