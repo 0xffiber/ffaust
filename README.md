@@ -40,6 +40,16 @@ Run the tool:
 # target/release/ffaust <IP> <PORT> [<IFACE>]
 ```
 
+## Implementation Notes
+
+The tool makes an attempt to identify default interface to run the attack. If the default one could not be detected, please make sure to pass interface name with arguments.
+
+In you have multiple interfaces with external connectivity, you can specify all of them (comma-separated).
+
+Destination MAC is resolved once before launching the attack (using ARP protocol).
+
+Full ethernet packet for each (source -> destination) pair is generated only once. Each of the following packets is created by mutating only a few bytes in the payload (and recomputing TCP header checksum).
+
 ## TODO
 
 The tool is under active development:
