@@ -1,9 +1,13 @@
+# MLPS "Faust"
+
+(Multiple Launch Packet System)
+
 ```
-    ________                 __ 
-   / __/ __/___ ___  _______/ /_
-  / /_/ /_/ __ `/ / / / ___/ __/
- / __/ __/ /_/ / /_/ (__  ) /_  
-/_/ /_/  \__,_/\__,_/____/\__/  
+   ____       ________   ____                 __ 
+  / __ \_  __/ __/ __/  / __/___ ___  _______/ /_
+ / / / / |/_/ /_/ /_   / /_/ __ `/ / / / ___/ __/
+/ /_/ />  </ __/ __/  / __/ /_/ / /_/ (__  ) /_  
+\____/_/|_/_/ /_/    /_/  \__,_/\__,_/____/\__/  
 ```
 
 A high performance TCP SYN flooding tool. By operating directly with ethernet packets to bypass kernel TCP stack, `ffaust` achieves up to 2.5M pps (packets per second) on a single machine.
