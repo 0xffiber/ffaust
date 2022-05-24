@@ -6,6 +6,8 @@ use clap::Parser;
 use default_net::gateway::Gateway;
 use default_net::interface::{get_default_interface, get_interfaces};
 
+use indicatif::{HumanBytes, HumanCount};
+
 use pnet::datalink::Channel::Ethernet;
 use pnet::datalink::{self, DataLinkReceiver, DataLinkSender, MacAddr, NetworkInterface};
 use pnet::packet::arp::{ArpHardwareTypes, ArpOperations, ArpPacket, MutableArpPacket};
@@ -18,8 +20,10 @@ use pnet::packet::MutablePacket;
 use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 const ETHERNET_HEADER_LEN: usize = 14;
 const ETHERNET_ARP_PACKET_LEN: usize = 42;
@@ -173,7 +177,12 @@ fn recycle_syn_packet(config: &Config, destination: &Target, buf: &mut [u8]) {
     }
 }
 
-fn stress(iface: &NetworkInterface, config: Config, destination: &Target) {
+fn stress(
+    iface: &NetworkInterface,
+    config: Config,
+    destination: &Target,
+    packets_sent: Arc<AtomicU64>,
+) {
     let (mut tx, _) = match datalink::channel(iface, Default::default()) {
         Ok(Ethernet(tx, rx)) => (tx, rx),
         Ok(_) => panic!("Unknown channel type"),
@@ -189,6 +198,7 @@ fn stress(iface: &NetworkInterface, config: Config, destination: &Target) {
         // replace port field in the packet, recompute checksum
         recycle_syn_packet(&config, destination, &mut buffer);
         tx.send_to(&buffer, None);
+        packets_sent.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -315,14 +325,41 @@ fn main() {
         dest_mac: destination_mac,
     };
 
+    let packets_sent = Arc::new(AtomicU64::new(0));
+
+    // XXX: much better option would be to keep number of workers as a parameter
     let mut handles = Vec::new();
     let interface = Arc::new(interface);
-    // XXX: much better option would be to keep number of workers as a parameter
     for target in args.target.into_iter() {
         let interface = Arc::clone(&interface);
-        handles.push(thread::spawn(move || stress(&interface, config, &target)));
+        let packets_sent = Arc::clone(&packets_sent);
+        handles.push(thread::spawn(move || {
+            stress(&interface, config, &target, packets_sent)
+        }));
     }
+
+    let packets_sent = Arc::clone(&packets_sent);
+    let progress_printer = thread::spawn(move || {
+        // XXX: fix time calculations
+        let mut elapsed_seconds = 1;
+        loop {
+            thread::sleep(Duration::from_secs(1));
+            let sent = packets_sent.load(Ordering::Relaxed);
+            println!(
+                "==> {}s sent: {} ({} pps) traffic: {} ({}/s)",
+                elapsed_seconds,
+                HumanCount(sent).to_string(),
+                HumanCount(sent / elapsed_seconds).to_string(),
+                HumanBytes(sent * TCP_SYN_PACKET_LEN as u64).to_string(),
+                HumanBytes(sent * TCP_SYN_PACKET_LEN as u64 / elapsed_seconds).to_string()
+            );
+            elapsed_seconds += 1;
+        }
+    });
+
+    // now we can join all threads
     for handle in handles.into_iter() {
         handle.join().unwrap();
     }
+    progress_printer.join().unwrap();
 }
