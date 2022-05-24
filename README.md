@@ -38,6 +38,25 @@ Run the tool:
 
 ```shell
 # target/release/ffaust 169.172.1.1:80 10.0.1.5:443
+   ____       ________   ____                 __
+  / __ \_  __/ __/ __/  / __/___ ___  _______/ /_
+ / / / / |/_/ /_/ /_   / /_/ __ `/ / / / ___/ __/
+/ /_/ />  </ __/ __/  / __/ /_/ / /_/ (__  ) /_
+\____/_/|_/_/ /_/    /_/  \__,_/\__,_/____/\__/
+
+Preparing config... DONE
+Source:
+  iface eth0
+  inet 10.0.0.6
+  gw 10.0.0.1
+  ether 00:00:00:9a:5f:55
+  dest 12:34:56:00:00:00
+
+==> 1s sent: 1,636,753 (1,636,753 pps) traffic: 103.02 MiB (103.02 MiB/s)
+==> 2s sent: 3,333,556 (1,666,778 pps) traffic: 209.82 MiB (104.91 MiB/s)
+==> 3s sent: 5,012,894 (1,670,964 pps) traffic: 315.52 MiB (105.17 MiB/s)
+==> 4s sent: 6,672,925 (1,668,231 pps) traffic: 420.01 MiB (105.00 MiB/s)
+==> 5s sent: 8,397,134 (1,679,426 pps) traffic: 528.54 MiB (105.71 MiB/s)
 ```
 
 Full list of options:
