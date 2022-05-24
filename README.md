@@ -93,9 +93,8 @@ Full ethernet packet for each (source -> destination) pair is generated only onc
 
 The tool is under active development:
 
-- [ ] Proper CLI args, advanced configuration for interface(s), IP ranges, etc
-- [ ] Run multiple threads (test if this is going to be necessary againsts single IP address)
-- [ ] Logger to print progress
+- [ ] Advanced configuration for interface(s), IP ranges, etc (actually use it)
 - [ ] Support source IP spoofing (with flag)
-- [ ] Multiple targets (ip/port pairs), option to read config from stdin, resolve for hostnames
+- [ ] Run multiple threads (test if this is going to be necessary againsts single IP address)
 - [ ] Settings for number of worker threads & total execution time
+- [ ] Option to read config from stdin, resolve for hostnames
