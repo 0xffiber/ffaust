@@ -1,6 +1,8 @@
 extern crate pnet;
 extern crate rand;
 
+use clap::Parser;
+
 use default_net::gateway::Gateway;
 use default_net::interface::{get_default_interface, get_interfaces};
 use default_net::ip::Ipv4Net;
@@ -17,22 +19,27 @@ use pnet::packet::ipv4::{self, Ipv4Flags, MutableIpv4Packet};
 use pnet::packet::tcp::{self, MutableTcpPacket, TcpFlags, TcpOption};
 use pnet::packet::MutablePacket;
 
-use std::env;
+use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr};
+use std::str::FromStr;
 use std::thread;
 
 const ETHERNET_HEADER_LEN: usize = 14;
 const IPV4_HEADER_LEN: usize = 20;
 
 pub struct Config<'a> {
-    pub destination_ip: Ipv4Addr,
-    pub destination_port: u16,
+    pub destination: &'a Target,
     pub destination_mac: &'a MacAddr,
     pub ipv4: &'a Vec<Ipv4Net>,
     pub iface_ip: Ipv4Addr,
-    pub iface_ips: Vec<Ipv4Addr>,
     pub iface_name: &'a String,
     pub iface_src_mac: &'a MacAddr,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Target {
+    addr: Ipv4Addr,
+    port: u16,
 }
 
 // XXX: it's actually MacAddr or error (i assume, should be just a Result)
@@ -91,9 +98,6 @@ fn arp_get_mac(
 }
 
 pub fn build_packet(config: &Config, tmp_packet: &mut [u8]) {
-    // let iface_ip_index = (rand::random::<f32>() * config.ipv4.len() as f32).floor() as usize;
-    // let iface_ip = config.ipv4[iface_ip_index].addr;
-
     // XXX: keep configuration for IP spoofing
     let iface_ip = config.iface_ip;
 
@@ -117,7 +121,7 @@ pub fn build_packet(config: &Config, tmp_packet: &mut [u8]) {
         ip_header.set_total_length(52);
         ip_header.set_next_level_protocol(IpNextHeaderProtocols::Tcp);
         ip_header.set_source(iface_ip);
-        ip_header.set_destination(config.destination_ip);
+        ip_header.set_destination(config.destination.addr);
         ip_header.set_identification(rand::random::<u16>());
         ip_header.set_ttl(64);
         ip_header.set_version(4);
@@ -136,7 +140,7 @@ pub fn build_packet(config: &Config, tmp_packet: &mut [u8]) {
         // XXX: this should be in the range 32000-61000, or read sysctl settings
         //      to be even more precise than this
         tcp_header.set_source(rand::random::<u16>());
-        tcp_header.set_destination(config.destination_port);
+        tcp_header.set_destination(config.destination.port);
         tcp_header.set_flags(TcpFlags::SYN);
         tcp_header.set_window(65535);
         tcp_header.set_data_offset(8);
@@ -153,7 +157,7 @@ pub fn build_packet(config: &Config, tmp_packet: &mut [u8]) {
         let checksum = tcp::ipv4_checksum(
             &tcp_header.to_immutable(),
             &iface_ip,
-            &config.destination_ip,
+            &config.destination.addr,
         );
         tcp_header.set_checksum(checksum);
     }
@@ -172,13 +176,13 @@ pub fn repurpose_packet(config: &Config, tmp_packet: &mut [u8]) {
         let checksum = tcp::ipv4_checksum(
             &tcp_header.to_immutable(),
             &config.iface_ip,
-            &config.destination_ip,
+            &config.destination.addr,
         );
         tcp_header.set_checksum(checksum);
     }
 }
 
-fn sender(iface_name: String) {
+fn sender(iface_name: String, destination: &Target) {
     let dinterfaces = get_interfaces();
     let dinterface = dinterfaces
         .iter()
@@ -223,9 +227,6 @@ fn sender(iface_name: String) {
     println!("All IPs: {:?}", inet.size());
     println!("Source IP: {}", iface_ip);
 
-    let destination_ip = env::args().nth(1).unwrap().parse().unwrap();
-    let destination_port = env::args().nth(2).unwrap().parse().unwrap();
-
     let (mut tx, mut rx) = match datalink::channel(&interface, Default::default()) {
         Ok(Ethernet(tx, rx)) => (tx, rx),
         Ok(_) => panic!("Unknown channel type"),
@@ -241,7 +242,7 @@ fn sender(iface_name: String) {
                 todo!()
             }
         }
-        _ => destination_ip,
+        _ => destination.addr,
     };
 
     println!("Gateway IP: {}", gateway_ip);
@@ -251,59 +252,82 @@ fn sender(iface_name: String) {
     print!("Remote addr MAC: {:?}\n", destination_mac);
 
     let config = Config {
-        destination_ip,
-        destination_port,
+        destination,
         destination_mac: &destination_mac,
         ipv4: &dinterface.ipv4,
         iface_ip,
-        iface_ips: inet.into_iter().collect(),
         iface_name: &interface.name,
         iface_src_mac: &interface.mac.unwrap(),
     };
 
     let mut buffer = [0u8; 66];
-    // build initial packet
+    // building initial packet
     build_packet(&config, &mut buffer);
     // XXX: do everything before this line in main thread (including ARP resolve)
     loop {
         // replace port field in the packet
         repurpose_packet(&config, &mut buffer);
         tx.send_to(&buffer, None);
-        // tx.build_and_send(1, 66, &mut |mut buf| build_packet(&config, &mut buf));
     }
 }
 
+impl FromStr for Target {
+    type Err = Box<dyn Error + Send + Sync + 'static>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let pos = s
+            .find(':')
+            .ok_or_else(|| format!("invalid target {}: use ip:port syntax", s))?;
+        Ok(Self {
+            addr: s[..pos].parse()?,
+            port: s[pos + 1..].parse()?,
+        })
+    }
+}
+
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+    /// ip:port pair to stress out
+    target: Vec<Target>,
+
+    /// Source port(s) for packets
+    #[clap(short = 's', long, parse(try_from_str))]
+    source_port: Option<u16>,
+
+    /// Source address(es) for packets
+    #[clap(short = 'S', long)]
+    source_ip: Option<IpAddr>,
+
+    /// Specify gateway MAC address
+    #[clap(short = 'G', long)]
+    gateway_mac: Option<MacAddr>,
+
+    /// Specify network interface to use
+    #[clap(short = 'i', long)]
+    interface: Option<String>,
+}
+
 fn main() {
-    /*
-    let workers: i8 = match env::args().nth(3) {
-        Some(w) => w.parse().unwrap(),
-        None => 1,
-    };
+    let args = Args::parse();
 
-    if workers > 1 {
-        for _ in 0..workers {
-            thread::spawn(|| sender(interface));
-        }
-    };
-    */
-
-    println!(r"
+    println!(
+        r"
    ____       ________   ____                 __ 
   / __ \_  __/ __/ __/  / __/___ ___  _______/ /_
  / / / / |/_/ /_/ /_   / /_/ __ `/ / / / ___/ __/
 / /_/ />  </ __/ __/  / __/ /_/ / /_/ (__  ) /_  
 \____/_/|_/_/ /_/    /_/  \__,_/\__,_/____/\__/  
-    ");
+    "
+    );
 
-    match env::args().nth(3) {
-        Some(w) => {
-            let config: Vec<String> = w.to_string().split(",").map(|s| s.to_string()).collect();
-            config.into_iter().for_each(|iface_name| {
-                thread::spawn(move || sender(iface_name.to_string()));
-            });
-        }
-        None => {}
-    };
     let iface = get_default_interface().unwrap();
-    sender(iface.name);
+    let mut handles = Vec::new();
+    for target in args.target.into_iter() {
+        let iface_name = iface.name.clone();
+        handles.push(thread::spawn(move || sender(iface_name, &target)));
+    }
+    for handle in handles.into_iter() {
+        handle.join().unwrap();
+    }
 }
