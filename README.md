@@ -37,7 +37,27 @@ To compile from source:
 Run the tool:
 
 ```shell
-# target/release/ffaust <IP> <PORT> [<IFACE>]
+# target/release/ffaust 169.172.1.1:80 10.0.1.5:443
+```
+
+Full list of options:
+
+```shell
+ffaust 0.1.0
+
+USAGE:
+    ffaust [OPTIONS] [TARGET]...
+
+ARGS:
+    <TARGET>...    ip:port pair to stress out
+
+OPTIONS:
+    -G, --gateway-mac <GATEWAY_MAC>    Specify gateway MAC address
+    -h, --help                         Print help information
+    -i, --interface <INTERFACE>        Specify network interface to use
+    -s, --source-port <SOURCE_PORT>    Source port(s) for packets
+    -S, --source-ip <SOURCE_IP>        Source address(es) for packets
+    -V, --version                      Print version information
 ```
 
 ## Implementation Notes
