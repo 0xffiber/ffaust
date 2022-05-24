@@ -71,6 +71,8 @@ ARGS:
     <TARGET>...    ip:port pair to stress out
 
 OPTIONS:
+    -g, --gateway-ip <GATEWAY_IP>      Specify gateway IP address
+    -G, --gateway-mac <GATEWAY_MAC>    Specify gateway MAC address
     -G, --gateway-mac <GATEWAY_MAC>    Specify gateway MAC address
     -h, --help                         Print help information
     -i, --interface <INTERFACE>        Specify network interface to use

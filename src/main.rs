@@ -31,9 +31,11 @@ const IPV4_HEADER_LEN: usize = 20;
 const ARP_PACKET_LEN: usize = 28;
 const TCP_SYN_PACKET_LEN: usize = 66;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct Config {
+    pub iface_name: String,
     pub iface_ip: Ipv4Addr,
+    pub gateway_ip: Ipv4Addr,
     pub src_mac: MacAddr,
     pub dest_mac: MacAddr,
 }
@@ -228,7 +230,11 @@ struct Args {
 
     /// Source address(es) for packets
     #[clap(short = 'S', long)]
-    source_ip: Option<IpAddr>,
+    source_ip: Option<Ipv4Addr>,
+
+    /// Specify gateway IP address
+    #[clap(short = 'g', long)]
+    gateway_ip: Option<Ipv4Addr>,
 
     /// Specify gateway MAC address
     #[clap(short = 'G', long)]
@@ -237,6 +243,93 @@ struct Args {
     /// Specify network interface to use
     #[clap(short = 'i', long)]
     interface: Option<String>,
+}
+
+fn resolve_iface(args: &Args) -> (NetworkInterface, Config) {
+    let iface_name: String = args
+        .interface
+        .clone()
+        .or_else(|| match get_default_interface() {
+            Ok(iface) => Some(iface.name),
+            // XXX: better error message
+            _ => None,
+        })
+        // XXX: better error message
+        .unwrap();
+
+    let dinterface = get_interfaces()
+        .into_iter()
+        .find(|iface| iface.name == iface_name)
+        // XXX: better error message
+        .unwrap();
+
+    // XXX: no need to search the same thing twice
+    let interfaces = datalink::interfaces();
+    let interface = interfaces
+        .into_iter()
+        .find(|iface| iface.name == iface_name)
+        .unwrap();
+
+    let iface_ip: Ipv4Addr = args
+        .source_ip
+        .clone()
+        .or_else(|| {
+            interface
+                .ips
+                .iter()
+                // XXX: we could make use of multiple IPs BTW
+                .filter_map(|network| match network.ip() {
+                    IpAddr::V4(ipv4) => Some(ipv4),
+                    _ => None,
+                })
+                .next()
+        })
+        .expect(&format!(
+            "the interface {} does not have any IPv4 addresses",
+            iface_name
+        ));
+
+    let gateway_ip = args
+        .gateway_ip
+        .clone()
+        .or_else(|| match dinterface.gateway {
+            Some(Gateway { ip_addr, .. }) => {
+                if let IpAddr::V4(ip_addr) = ip_addr {
+                    Some(ip_addr)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .expect("Default gateway cannot be detected");
+
+    let source_mac = interface.mac.unwrap();
+    let destination_mac = args
+        .gateway_mac
+        .clone()
+        .or_else(|| {
+            let (mut tx, mut rx) = match datalink::channel(&interface, Default::default()) {
+                Ok(Ethernet(tx, rx)) => (tx, rx),
+                Ok(_) => panic!("Unknown channel type"),
+                Err(e) => panic!("Error happened {}", e),
+            };
+            // XXX: only replace dest IP with gateway IP if it's not broadcast
+            //      (i assume it should just fail write away on broadcast)
+            Some(find_mac(&mut tx, &mut rx, source_mac, iface_ip, gateway_ip))
+        })
+        .unwrap();
+
+    (
+        interface,
+        Config {
+            iface_name,
+            iface_ip,
+            gateway_ip,
+            src_mac: source_mac,
+            dest_mac: destination_mac,
+        },
+    )
 }
 
 fn main() {
@@ -253,77 +346,12 @@ fn main() {
     );
 
     print!("Preparing config...");
-
-    let iface = get_default_interface().unwrap();
-    let iface_name = iface.name;
-
-    let dinterface = get_interfaces()
-        .into_iter()
-        .find(|iface| iface.name == iface_name)
-        .unwrap();
-
-    // XXX: no need to search the same thing twice
-    let interfaces = datalink::interfaces();
-    let interface = interfaces
-        .into_iter()
-        .find(|iface| iface.name == iface_name)
-        .unwrap();
-
-    // XXX: take this from dinterface instead
-    let iface_ip = interface
-        .ips
-        .iter()
-        .filter_map(|network| match network.ip() {
-            IpAddr::V4(ipv4) => Some(ipv4),
-            _ => None,
-        })
-        .next()
-        .expect(&format!(
-            "the interface {} does not have any IP addresses",
-            interface
-        ));
-
-    // XXX: only replace target IP with gateway if it's not broadcast
-    let gateway_ip = match dinterface.gateway {
-        Some(Gateway { ip_addr, .. }) => {
-            if let IpAddr::V4(ip_addr) = ip_addr {
-                ip_addr
-            } else {
-                panic!("Default gateway cannot be detected")
-            }
-        }
-        _ => panic!("Default gateway cannot be detected"),
-    };
-
-    let (mut tx, mut rx) = match datalink::channel(&interface, Default::default()) {
-        Ok(Ethernet(tx, rx)) => (tx, rx),
-        Ok(_) => panic!("Unknown channel type"),
-        Err(e) => panic!("Error happened {}", e),
-    };
-
-    let destination_mac = find_mac(
-        &mut tx,
-        &mut rx,
-        interface.mac.unwrap(),
-        iface_ip,
-        gateway_ip,
-    );
-
+    let (interface, config) = resolve_iface(&args);
     println!(" DONE");
     println!(
         "Source:\n  iface {}\n  inet {}\n  gw {}\n  ether {}\n  dest {}\n",
-        iface_name,
-        iface_ip,
-        gateway_ip,
-        interface.mac.unwrap(),
-        destination_mac
+        config.iface_name, config.iface_ip, config.gateway_ip, config.src_mac, config.dest_mac,
     );
-
-    let config = Config {
-        iface_ip,
-        src_mac: interface.mac.unwrap(),
-        dest_mac: destination_mac,
-    };
 
     let packets_sent = Arc::new(AtomicU64::new(0));
 
@@ -333,6 +361,7 @@ fn main() {
     for target in args.target.into_iter() {
         let interface = Arc::clone(&interface);
         let packets_sent = Arc::clone(&packets_sent);
+        let config = config.clone();
         handles.push(thread::spawn(move || {
             stress(&interface, config, &target, packets_sent)
         }));
