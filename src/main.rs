@@ -267,9 +267,9 @@ fn sender(iface_name: String) {
     // XXX: do everything before this line in main thread (including ARP resolve)
     loop {
         // replace port field in the packet
-        // repurpose_packet(&config, &mut buffer);
-        // tx.send_to(&buffer, None);
-        tx.build_and_send(1, 66, &mut |mut buf| build_packet(&config, &mut buf));
+        repurpose_packet(&config, &mut buffer);
+        tx.send_to(&buffer, None);
+        // tx.build_and_send(1, 66, &mut |mut buf| build_packet(&config, &mut buf));
     }
 }
 
