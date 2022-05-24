@@ -27,9 +27,9 @@ At a high level, how this works is that we craft our own TCP SYN packets and the
 To compile from source:
 
 ```shell
-# git clone https://github.com/0xffiber/ffaust.git
-# cd ffaust
-# cargo build --release
+git clone https://github.com/0xffiber/ffaust.git
+cd ffaust
+cargo build --release
 ```
 
 ## Usage
@@ -37,7 +37,7 @@ To compile from source:
 Run the tool:
 
 ```shell
-# target/release/ffaust 169.172.1.1:80 10.0.1.5:443
+$ target/release/ffaust 169.172.1.1:80 10.0.1.5:443
    ____       ________   ____                 __
   / __ \_  __/ __/ __/  / __/___ ___  _______/ /_
  / / / / |/_/ /_/ /_   / /_/ __ `/ / / / ___/ __/
