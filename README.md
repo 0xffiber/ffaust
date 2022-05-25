@@ -59,6 +59,8 @@ Source:
 ==> 5s sent: 8,397,134 (1,679,426 pps) traffic: 528.54 MiB (105.71 MiB/s)
 ```
 
+To get max performance make sure to properly set number of sender threads (typically number of cores - 2).
+
 Full list of options:
 
 ```shell
@@ -71,14 +73,14 @@ ARGS:
     <TARGET>...    ip:port pair to stress out
 
 OPTIONS:
-    -g, --gateway-ip <GATEWAY_IP>      Specify gateway IP address
-    -G, --gateway-mac <GATEWAY_MAC>    Specify gateway MAC address
-    -G, --gateway-mac <GATEWAY_MAC>    Specify gateway MAC address
-    -h, --help                         Print help information
-    -i, --interface <INTERFACE>        Specify network interface to use
-    -s, --source-port <SOURCE_PORT>    Source port(s) for packets
-    -S, --source-ip <SOURCE_IP>        Source address(es) for packets
-    -V, --version                      Print version information
+    -g, --gateway-ip <GATEWAY_IP>            Specify gateway IP address
+    -G, --gateway-mac <GATEWAY_MAC>          Specify gateway MAC address
+    -h, --help                               Print help information
+    -i, --interface <INTERFACE>              Specify network interface to use
+    -s, --source-port <SOURCE_PORT>          Source port(s) for packets
+    -S, --source-ip <SOURCE_IP>              Source address(es) for packets
+    -T, --sender-threads <SENDER_THREADS>    Threads used to send packets  (default=`1')
+    -V, --version                            Print version information
 ```
 
 ## Implementation Notes

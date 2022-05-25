@@ -17,6 +17,7 @@ use pnet::packet::ipv4::{self, Ipv4Flags, MutableIpv4Packet};
 use pnet::packet::tcp::{self, MutableTcpPacket, TcpFlags, TcpOption};
 use pnet::packet::MutablePacket;
 
+use std::io::{stdout, Write};
 use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
@@ -40,7 +41,7 @@ pub struct Config {
     pub dest_mac: MacAddr,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Target {
     addr: Ipv4Addr,
     port: u16,
@@ -104,7 +105,7 @@ fn find_mac(
 }
 
 // XXX: keep configuration for IP spoofing
-fn build_syn_packet(config: &Config, destination: &Target, buf: &mut [u8]) {
+fn build_syn_packet(config: &Config, dest: &Target, buf: &mut [u8]) {
     let iface_ip = config.iface_ip;
 
     // setup Ethernet header
@@ -126,7 +127,7 @@ fn build_syn_packet(config: &Config, destination: &Target, buf: &mut [u8]) {
         ip_header.set_total_length(52);
         ip_header.set_next_level_protocol(IpNextHeaderProtocols::Tcp);
         ip_header.set_source(iface_ip);
-        ip_header.set_destination(destination.addr);
+        ip_header.set_destination(dest.addr);
         ip_header.set_identification(rand::random::<u16>());
         ip_header.set_ttl(64);
         ip_header.set_version(4);
@@ -142,7 +143,7 @@ fn build_syn_packet(config: &Config, destination: &Target, buf: &mut [u8]) {
             MutableTcpPacket::new(&mut buf[(ETHERNET_HEADER_LEN + IPV4_HEADER_LEN)..]).unwrap();
 
         tcp_header.set_source(rand::random::<u16>());
-        tcp_header.set_destination(destination.port);
+        tcp_header.set_destination(dest.port);
         tcp_header.set_flags(TcpFlags::SYN);
         tcp_header.set_window(65535);
         tcp_header.set_data_offset(8);
@@ -156,7 +157,7 @@ fn build_syn_packet(config: &Config, destination: &Target, buf: &mut [u8]) {
             TcpOption::wscale(6),
         ]);
 
-        let checksum = tcp::ipv4_checksum(&tcp_header.to_immutable(), &iface_ip, &destination.addr);
+        let checksum = tcp::ipv4_checksum(&tcp_header.to_immutable(), &iface_ip, &dest.addr);
         tcp_header.set_checksum(checksum);
     }
 }
@@ -182,7 +183,7 @@ fn recycle_syn_packet(config: &Config, destination: &Target, buf: &mut [u8]) {
 fn stress(
     iface: &NetworkInterface,
     config: Config,
-    destination: &Target,
+    destinations: Vec<Target>,
     packets_sent: Arc<AtomicU64>,
 ) {
     let (mut tx, _) = match datalink::channel(iface, Default::default()) {
@@ -191,16 +192,23 @@ fn stress(
         Err(e) => panic!("Error happened {}", e),
     };
 
-    let mut buffer = [0u8; TCP_SYN_PACKET_LEN];
+    let num_dest = destinations.len();
+    let mut buffers: Vec<[u8; TCP_SYN_PACKET_LEN]> = Vec::new();
 
-    // building initial packet
-    build_syn_packet(&config, destination, &mut buffer);
+    for ind in 0..num_dest {
+        let mut buffer = [0u8; TCP_SYN_PACKET_LEN];
+        buffers.push(buffer);
+        // building initial packet for each destination
+        build_syn_packet(&config, &destinations[ind], &mut buffer);
+    }
 
+    let mut cursor = 0;
     loop {
         // replace port field in the packet, recompute checksum
-        recycle_syn_packet(&config, destination, &mut buffer);
-        tx.send_to(&buffer, None);
+        recycle_syn_packet(&config, &destinations[cursor], &mut buffers[cursor]);
+        tx.send_to(&buffers[cursor], None);
         packets_sent.fetch_add(1, Ordering::SeqCst);
+        cursor = (cursor + 1) % num_dest;
     }
 }
 
@@ -223,6 +231,10 @@ impl FromStr for Target {
 struct Args {
     /// ip:port pair to stress out
     target: Vec<Target>,
+
+    /// Threads used to send packets  (default=`1')
+    #[clap(short = 'T', long, parse(try_from_str))]
+    sender_threads: Option<u8>,
 
     /// Source port(s) for packets
     #[clap(short = 's', long, parse(try_from_str))]
@@ -346,7 +358,10 @@ fn main() {
     );
 
     print!("Preparing config...");
+    stdout().flush().unwrap();
+
     let (interface, config) = resolve_iface(&args);
+
     println!(" DONE");
     println!(
         "Source:\n  iface {}\n  inet {}\n  gw {}\n  ether {}\n  dest {}\n",
@@ -355,15 +370,16 @@ fn main() {
 
     let packets_sent = Arc::new(AtomicU64::new(0));
 
-    // XXX: much better option would be to keep number of workers as a parameter
     let mut handles = Vec::new();
+    let num_workers = args.sender_threads.unwrap_or(1);
     let interface = Arc::new(interface);
-    for target in args.target.into_iter() {
+    for _ in 0..num_workers {
         let interface = Arc::clone(&interface);
         let packets_sent = Arc::clone(&packets_sent);
         let config = config.clone();
+        let targets = args.target.clone();
         handles.push(thread::spawn(move || {
-            stress(&interface, config, &target, packets_sent)
+            stress(&interface, config, targets, packets_sent)
         }));
     }
 
