@@ -15,7 +15,6 @@ use pnet::packet::ethernet::{EtherTypes, MutableEthernetPacket};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::{self, Ipv4Flags, MutableIpv4Packet};
 use pnet::packet::tcp::{self, MutableTcpPacket, TcpFlags, TcpOption};
-use pnet::packet::MutablePacket;
 
 use std::error::Error;
 use std::io::{stdout, Write};
@@ -29,7 +28,6 @@ use std::time::Duration;
 const ETHERNET_HEADER_LEN: usize = 14;
 const ETHERNET_ARP_PACKET_LEN: usize = 42;
 const IPV4_HEADER_LEN: usize = 20;
-const ARP_PACKET_LEN: usize = 28;
 const TCP_SYN_PACKET_LEN: usize = 66;
 
 #[derive(Debug, Clone)]
@@ -55,33 +53,33 @@ fn find_mac(
     source_ip: Ipv4Addr,
     target_ip: Ipv4Addr,
 ) -> MacAddr {
-    let mut ethernet_buffer = [0u8; ETHERNET_ARP_PACKET_LEN];
-    let mut ethernet_packet = MutableEthernetPacket::new(&mut ethernet_buffer).unwrap();
+    let mut buf = [0u8; ETHERNET_ARP_PACKET_LEN];
 
-    ethernet_packet.set_source(source_mac);
-    ethernet_packet.set_destination(MacAddr::broadcast());
-    ethernet_packet.set_ethertype(EtherTypes::Arp);
+    // setup Ethernet header
+    {
+        let mut eth_header = MutableEthernetPacket::new(&mut buf[..ETHERNET_HEADER_LEN]).unwrap();
 
-    let mut arp_buffer = [0u8; ARP_PACKET_LEN];
-    let mut arp_packet = MutableArpPacket::new(&mut arp_buffer).unwrap();
+        eth_header.set_destination(source_mac);
+        eth_header.set_source(MacAddr::broadcast());
+        eth_header.set_ethertype(EtherTypes::Arp);
+    }
 
-    arp_packet.set_hardware_type(ArpHardwareTypes::Ethernet);
-    arp_packet.set_protocol_type(EtherTypes::Ipv4);
-    arp_packet.set_hw_addr_len(6);
-    arp_packet.set_proto_addr_len(4);
-    arp_packet.set_operation(ArpOperations::Request);
-    arp_packet.set_sender_hw_addr(source_mac);
-    arp_packet.set_sender_proto_addr(source_ip);
-    arp_packet.set_target_hw_addr(MacAddr::zero());
-    arp_packet.set_target_proto_addr(target_ip);
+    // setup ARP packet
+    {
+        let mut arp_packet = MutableArpPacket::new(&mut buf[ETHERNET_HEADER_LEN..]).unwrap();
 
-    // XXX: can I just make this by taking subslice?
-    ethernet_packet.set_payload(arp_packet.packet_mut());
+        arp_packet.set_hardware_type(ArpHardwareTypes::Ethernet);
+        arp_packet.set_protocol_type(EtherTypes::Ipv4);
+        arp_packet.set_hw_addr_len(6);
+        arp_packet.set_proto_addr_len(4);
+        arp_packet.set_operation(ArpOperations::Request);
+        arp_packet.set_sender_hw_addr(source_mac);
+        arp_packet.set_sender_proto_addr(source_ip);
+        arp_packet.set_target_hw_addr(MacAddr::zero());
+        arp_packet.set_target_proto_addr(target_ip);
+    }
 
-    sender
-        .send_to(ethernet_packet.packet_mut(), None)
-        .unwrap()
-        .unwrap();
+    sender.send_to(&buf, None).unwrap().unwrap();
 
     // XXX: loop thourgh packets with timeout
     // XXX: there's a race condition here :(
