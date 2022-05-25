@@ -197,9 +197,9 @@ fn stress(
 
     for ind in 0..num_dest {
         let mut buffer = [0u8; TCP_SYN_PACKET_LEN];
-        buffers.push(buffer);
         // building initial packet for each destination
         build_syn_packet(&config, &destinations[ind], &mut buffer);
+        buffers.push(buffer);
     }
 
     let mut cursor = 0;
