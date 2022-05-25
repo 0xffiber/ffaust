@@ -17,8 +17,8 @@ use pnet::packet::ipv4::{self, Ipv4Flags, MutableIpv4Packet};
 use pnet::packet::tcp::{self, MutableTcpPacket, TcpFlags, TcpOption};
 use pnet::packet::MutablePacket;
 
-use std::io::{stdout, Write};
 use std::error::Error;
+use std::io::{stdout, Write};
 use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
