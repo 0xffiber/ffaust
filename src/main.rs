@@ -17,11 +17,11 @@ use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::{self, Ipv4Flags, MutableIpv4Packet};
 use pnet::packet::tcp::{self, MutableTcpPacket, TcpFlags, TcpOption};
 
-use socket2::{Domain, SockAddr, Socket, Type};
+use rawsock::open_best_library;
 
 use std::error::Error;
 use std::io::{stdout, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -249,18 +249,25 @@ fn stress(
 }
 
 fn stress_ip(config: Config, destinations: Vec<Target>, packets_sent: Arc<AtomicU64>) {
-    let socket = Socket::new(Domain::IPV4, Type::RAW, None).unwrap();
-    socket.bind(&SocketAddr::new(IpAddr::V4(config.iface_ip), 0).into()).unwrap();
-    let num_dest = destinations.len();
+    println!("Opening packet capturing library");
+    let lib = open_best_library().expect("Could not open any packet capturing library");
+    println!("Library opened, version is {}", lib.version());
+    println!("Opening the {} interface", config.iface_name);
+    // XXX: check if the data_link is Ethernet or IP
+    let iface = lib
+        .open_interface(&config.iface_name)
+        .expect("Could not open network interface");
+    println!("Interface opened, data link: {}", iface.data_link());
 
+    let num_dest = destinations.len();
     loop {
         for ind in 0..num_dest {
             let mut buf = [0u8; TCP_SYN_PACKET_LEN];
             build_syn_packet(&config, &destinations[ind], &mut buf);
-            // XXX: horribly ineffecient
-            let addr: SockAddr = destinations[ind].clone().into();
-            // XXX: horribly ineffecient
-            socket.send_to(&buf[ETHERNET_HEADER_LEN..], &addr).unwrap();
+            // XXX: working with full packet just to throw it away is horribly ineffecient
+            iface
+                .send(&buf[ETHERNET_HEADER_LEN..])
+                .expect("Could not send packet");
             packets_sent.fetch_add(1, Ordering::SeqCst);
         }
     }
@@ -277,19 +284,6 @@ impl FromStr for Target {
             addr: s[..pos].parse()?,
             port: s[pos + 1..].parse()?,
         })
-    }
-}
-
-impl From<Target> for SocketAddr {
-    fn from(dest: Target) -> SocketAddr {
-        SocketAddr::new(IpAddr::V4(dest.addr), dest.port)
-    }
-}
-
-impl From<Target> for SockAddr {
-    fn from(dest: Target) -> SockAddr {
-        let addr: SocketAddr = dest.into();
-        addr.into()
     }
 }
 
