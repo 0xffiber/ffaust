@@ -73,6 +73,10 @@ ARGS:
     <TARGET>...    ip:port pair to stress out
 
 OPTIONS:
+        --enable-spoofing
+            Enable random source address (IPv4) spoofing. Disabled by default. Note that more often
+            than not these packets would be dropped by the network
+
     -g, --gateway-ip <GATEWAY_IP>            Specify gateway IP address
     -G, --gateway-mac <GATEWAY_MAC>          Specify gateway MAC address
     -h, --help                               Print help information
@@ -98,5 +102,4 @@ Full ethernet packet for each (source -> destination) pair is generated only onc
 The tool is under active development:
 
 - [ ] Support IP ranges for source IP
-- [ ] Support source IP spoofing (with flag)
 - [ ] Option to read config from stdin, resolve for hostnames

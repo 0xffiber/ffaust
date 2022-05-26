@@ -1,6 +1,7 @@
 extern crate pnet;
 extern crate rand;
 
+use crate::rand::Rng;
 use clap::Parser;
 
 use default_net::gateway::Gateway;
@@ -23,7 +24,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 const ETHERNET_HEADER_LEN: usize = 14;
 const ETHERNET_ARP_PACKET_LEN: usize = 42;
@@ -37,6 +38,7 @@ pub struct Config {
     pub gateway_ip: Ipv4Addr,
     pub src_mac: MacAddr,
     pub dest_mac: MacAddr,
+    pub enable_spoofing: bool,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -101,6 +103,16 @@ fn find_mac(
     }
 }
 
+fn rand_ipv4() -> Ipv4Addr {
+    let mut rng = rand::thread_rng();
+    Ipv4Addr::new(
+        rng.gen_range(1..255),
+        rng.gen_range(1..255),
+        rng.gen_range(1..255),
+        rng.gen_range(1..255),
+    )
+}
+
 // XXX: keep configuration for IP spoofing
 fn build_syn_packet(config: &Config, dest: &Target, buf: &mut [u8]) {
     let iface_ip = config.iface_ip;
@@ -159,8 +171,26 @@ fn build_syn_packet(config: &Config, dest: &Target, buf: &mut [u8]) {
     }
 }
 
-// XXX: i'm not sure if need to update identification bit from IP header
-fn recycle_syn_packet(config: &Config, destination: &Target, buf: &mut [u8]) {
+fn spoof_syn_packet(destination: &Target, buf: &mut [u8]) {
+    let source_ip = rand_ipv4();
+
+    // update IP header
+    {
+        let mut ip_header = MutableIpv4Packet::new(
+            &mut buf[ETHERNET_HEADER_LEN..(ETHERNET_HEADER_LEN + IPV4_HEADER_LEN)],
+        )
+        .unwrap();
+        ip_header.set_source(source_ip);
+        ip_header.set_identification(rand::random::<u16>());
+
+        let checksum = ipv4::checksum(&ip_header.to_immutable());
+        ip_header.set_checksum(checksum);
+    }
+
+    recycle_syn_packet(&source_ip, destination, buf);
+}
+
+fn recycle_syn_packet(iface_ip: &Ipv4Addr, destination: &Target, buf: &mut [u8]) {
     // update TCP header
     {
         let mut tcp_header =
@@ -168,11 +198,7 @@ fn recycle_syn_packet(config: &Config, destination: &Target, buf: &mut [u8]) {
 
         // XXX: it's likely to be much faster to cycle over shuffle vector
         tcp_header.set_source(rand::random::<u16>());
-        let checksum = tcp::ipv4_checksum(
-            &tcp_header.to_immutable(),
-            &config.iface_ip,
-            &destination.addr,
-        );
+        let checksum = tcp::ipv4_checksum(&tcp_header.to_immutable(), iface_ip, &destination.addr);
         tcp_header.set_checksum(checksum);
     }
 }
@@ -202,7 +228,15 @@ fn stress(
     let mut cursor = 0;
     loop {
         // replace port field in the packet, recompute checksum
-        recycle_syn_packet(&config, &destinations[cursor], &mut buffers[cursor]);
+        if config.enable_spoofing {
+            spoof_syn_packet(&destinations[cursor], &mut buffers[cursor]);
+        } else {
+            recycle_syn_packet(
+                &config.iface_ip,
+                &destinations[cursor],
+                &mut buffers[cursor],
+            );
+        }
         tx.send_to(&buffers[cursor], None);
         packets_sent.fetch_add(1, Ordering::SeqCst);
         cursor = (cursor + 1) % num_dest;
@@ -229,7 +263,7 @@ struct Args {
     /// ip:port pair to stress out
     target: Vec<Target>,
 
-    /// Threads used to send packets  (default=`1')
+    /// Threads used to send packets  (default=1)
     #[clap(short = 'T', long, parse(try_from_str))]
     sender_threads: Option<u8>,
 
@@ -252,6 +286,11 @@ struct Args {
     /// Specify network interface to use
     #[clap(short = 'i', long)]
     interface: Option<String>,
+
+    /// Enable random source address (IPv4) spoofing. Disabled by default.
+    /// Note that more often than not these packets would be dropped by the network
+    #[clap(long)]
+    enable_spoofing: bool,
 }
 
 fn resolve_iface(args: &Args) -> (NetworkInterface, Config) {
@@ -337,6 +376,7 @@ fn resolve_iface(args: &Args) -> (NetworkInterface, Config) {
             gateway_ip,
             src_mac: source_mac,
             dest_mac: destination_mac,
+            enable_spoofing: args.enable_spoofing,
         },
     )
 }
