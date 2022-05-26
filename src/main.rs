@@ -222,7 +222,6 @@ fn stress(
 
     let num_dest = destinations.len();
     let mut buffers: Vec<[u8; TCP_SYN_PACKET_LEN]> = Vec::new();
-
     for ind in 0..num_dest {
         let mut buffer = [0u8; TCP_SYN_PACKET_LEN];
         // building initial packet for each destination
@@ -260,13 +259,24 @@ fn stress_ip(config: Config, destinations: Vec<Target>, packets_sent: Arc<Atomic
     println!("Interface opened, data link: {}", iface.data_link());
 
     let num_dest = destinations.len();
+    let mut buffers: Vec<[u8; TCP_SYN_PACKET_LEN]> = Vec::new();
+    for ind in 0..num_dest {
+        let mut buffer = [0u8; TCP_SYN_PACKET_LEN];
+        // building initial packet for each destination
+        build_syn_packet(&config, &destinations[ind], &mut buffer);
+        buffers.push(buffer);
+    }
+
     loop {
-        for ind in 0..num_dest {
-            let mut buf = [0u8; TCP_SYN_PACKET_LEN];
-            build_syn_packet(&config, &destinations[ind], &mut buf);
-            // XXX: working with full packet just to throw it away is horribly ineffecient
+        for cursor in 0..num_dest {
+            recycle_syn_packet(
+                &config.iface_ip,
+                &destinations[cursor],
+                &mut buffers[cursor],
+            );
+            // XXX: working with full packet just to throw it away is ineffecient
             iface
-                .send(&buf[ETHERNET_HEADER_LEN..])
+                .send(&buffers[cursor][ETHERNET_HEADER_LEN..])
                 .expect("Could not send packet");
             packets_sent.fetch_add(1, Ordering::SeqCst);
         }
