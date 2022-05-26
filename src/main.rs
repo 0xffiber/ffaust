@@ -250,6 +250,7 @@ fn stress(
 
 fn stress_ip(config: Config, destinations: Vec<Target>, packets_sent: Arc<AtomicU64>) {
     let socket = Socket::new(Domain::IPV4, Type::RAW, None).unwrap();
+    socket.bind(&SocketAddr::new(IpAddr::V4(config.iface_ip), 0).into()).unwrap();
     let num_dest = destinations.len();
 
     loop {
