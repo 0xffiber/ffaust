@@ -9,4 +9,5 @@ piface = "*"
 pnet = "*"
 rand = "*"
 clap = { version = "3.1.18", features = ["derive"] }
-indicatif = { version = " 0.17.0-rc.10" }
+indicatif = { version = "0.17.0-rc.10" }
+socket2 = { version = "0.4.0", features = ["all"] }

