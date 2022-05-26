@@ -23,7 +23,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Instant, Duration};
 
 const ETHERNET_HEADER_LEN: usize = 14;
 const ETHERNET_ARP_PACKET_LEN: usize = 42;
@@ -383,11 +383,11 @@ fn main() {
 
     let packets_sent = Arc::clone(&packets_sent);
     let progress_printer = thread::spawn(move || {
-        // XXX: fix time calculations
-        let mut elapsed_seconds = 1;
+        let start = Instant::now();
         loop {
             thread::sleep(Duration::from_secs(1));
             let sent = packets_sent.load(Ordering::Relaxed);
+            let elapsed_seconds = start.elapsed().as_secs();
             println!(
                 "==> {}s sent: {} ({} pps) traffic: {} ({}/s)",
                 elapsed_seconds,
@@ -396,7 +396,6 @@ fn main() {
                 HumanBytes(sent * TCP_SYN_PACKET_LEN as u64).to_string(),
                 HumanBytes(sent * TCP_SYN_PACKET_LEN as u64 / elapsed_seconds).to_string()
             );
-            elapsed_seconds += 1;
         }
     });
 
