@@ -96,6 +96,9 @@ fn find_mac(
                     {
                         return arp.get_sender_hw_addr();
                     }
+                } else {
+                    // XXX: argressive solution though might be good as a workaround
+                    sender.send_to(&buf, None).unwrap().unwrap();
                 }
             }
             Err(e) => panic!("Error happened {}", e),
