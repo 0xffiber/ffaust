@@ -252,7 +252,6 @@ fn stress_ip(config: Config, destinations: Vec<Target>, packets_sent: Arc<Atomic
     let lib = open_best_library().expect("Could not open any packet capturing library");
     println!("Library opened, version is {}", lib.version());
     println!("Opening the {} interface", config.iface_name);
-    // XXX: check if the data_link is Ethernet or IP
     let iface = lib
         .open_interface(&config.iface_name)
         .expect("Could not open network interface");
