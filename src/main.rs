@@ -81,9 +81,8 @@ fn find_mac(
 
     sender.send_to(&buf, None).unwrap().unwrap();
 
-    // XXX: loop thourgh packets with timeout
-    // XXX: there's a race condition here :(
-    //      we have to run reader first
+    // XXX: loop thourgh packets with timeout,
+    //      and send another ARP packet on the first fire of a timer
     loop {
         match receiver.next() {
             Ok(buf) => {
