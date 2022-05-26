@@ -59,8 +59,8 @@ fn find_mac(
     {
         let mut eth_header = MutableEthernetPacket::new(&mut buf[..ETHERNET_HEADER_LEN]).unwrap();
 
-        eth_header.set_destination(source_mac);
-        eth_header.set_source(MacAddr::broadcast());
+        eth_header.set_source(source_mac);
+        eth_header.set_destination(MacAddr::broadcast());
         eth_header.set_ethertype(EtherTypes::Arp);
     }
 
