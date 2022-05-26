@@ -17,7 +17,7 @@ use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::{self, Ipv4Flags, MutableIpv4Packet};
 use pnet::packet::tcp::{self, MutableTcpPacket, TcpFlags, TcpOption};
 
-use rawsock::open_best_library;
+use rawsock::{DataLink, open_best_library};
 
 use std::error::Error;
 use std::io::{stdout, Write};
@@ -274,9 +274,14 @@ fn stress_ip(config: Config, destinations: Vec<Target>, packets_sent: Arc<Atomic
                 &destinations[cursor],
                 &mut buffers[cursor],
             );
-            // XXX: working with full packet just to throw it away is ineffecient
+            let buf = match iface.data_link() {
+                DataLink::Ethernet => &buffers[cursor],
+                // XXX: working with full packet just to throw it away is ineffecient
+                DataLink::RawIp => &buffers[cursor][ETHERNET_HEADER_LEN..],
+                _ => panic!("Unsupported datalink")
+            };
             iface
-                .send(&buffers[cursor][ETHERNET_HEADER_LEN..])
+                .send(buf)
                 .expect("Could not send packet");
             packets_sent.fetch_add(1, Ordering::SeqCst);
         }
