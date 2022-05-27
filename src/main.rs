@@ -18,6 +18,7 @@ use pnet::packet::ipv4::{self, Ipv4Flags, MutableIpv4Packet};
 use pnet::packet::tcp::{self, MutableTcpPacket, TcpFlags, TcpOption};
 
 use rawsock::traits::Library as PacketLibrary;
+use rawsock::Error as PacketError;
 use rawsock::{open_best_library, DataLink};
 
 use std::error::Error;
@@ -33,6 +34,8 @@ const ETHERNET_HEADER_LEN: usize = 14;
 const ETHERNET_ARP_PACKET_LEN: usize = 42;
 const IPV4_HEADER_LEN: usize = 20;
 const TCP_SYN_PACKET_LEN: usize = 66;
+
+const NO_SPACE_ERR: &str = "send: No buffer space available";
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -246,7 +249,12 @@ fn stress_ip(
                 DataLink::RawIp => &buffers[cursor][ETHERNET_HEADER_LEN..],
                 _ => panic!("Unsupported datalink"),
             };
-            iface.send(buf).expect("Could not send packet");
+            // iface.send(buf).expect("Could not send packet");
+            if let Err(PacketError::SendingPacket(msg)) = iface.send(buf) {
+                if NO_SPACE_ERR.ne(&msg) {
+                    panic!("Packets sending failed: {}", msg);
+                }
+            }
             packets_sent.fetch_add(1, Ordering::SeqCst);
         }
     }
