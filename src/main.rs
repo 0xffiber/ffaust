@@ -18,8 +18,7 @@ use pnet::packet::ipv4::{self, Ipv4Flags, MutableIpv4Packet};
 use pnet::packet::tcp::{self, MutableTcpPacket, TcpFlags, TcpOption};
 
 use rawsock::traits::Library as PacketLibrary;
-use rawsock::Error as PacketError;
-use rawsock::{open_best_library, DataLink};
+use rawsock::{open_best_library, DataLink, Error as PacketError};
 
 use std::error::Error;
 use std::io::{stdout, Write};
