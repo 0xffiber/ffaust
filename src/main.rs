@@ -424,7 +424,15 @@ fn main() {
 
     println!(" DONE");
     println!(
-        "Source:\n  iface {} ({})\n  inet {}\n  gw {}\n  ether {}\n  dest {}\n",
+        r"
+Source:
+  iface {} ({})
+  inet {}
+  gw {}
+  ether {}
+  dest {}
+
+Launching packets...",
         config.iface_name,
         config.datalink_type,
         config.iface_ip,
@@ -432,6 +440,7 @@ fn main() {
         config.src_mac,
         config.dest_mac,
     );
+    stdout().flush().unwrap();
 
     let packets_sent = Arc::new(AtomicU64::new(0));
 
