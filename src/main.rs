@@ -17,7 +17,8 @@ use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::{self, Ipv4Flags, MutableIpv4Packet};
 use pnet::packet::tcp::{self, MutableTcpPacket, TcpFlags, TcpOption};
 
-use rawsock::{DataLink, open_best_library};
+use rawsock::traits::Library as PacketLibrary;
+use rawsock::{open_best_library, DataLink};
 
 use std::error::Error;
 use std::io::{stdout, Write};
@@ -36,6 +37,7 @@ const TCP_SYN_PACKET_LEN: usize = 66;
 #[derive(Debug, Clone)]
 pub struct Config {
     pub iface_name: String,
+    pub datalink_type: DataLink,
     pub iface_ip: Ipv4Addr,
     pub gateway_ip: Ipv4Addr,
     pub src_mac: MacAddr,
@@ -208,17 +210,15 @@ fn recycle_syn_packet(iface_ip: &Ipv4Addr, destination: &Target, buf: &mut [u8])
     }
 }
 
-fn stress(
-    iface: &NetworkInterface,
+fn stress_ip(
+    plib: &Box<dyn PacketLibrary>,
     config: Config,
     destinations: Vec<Target>,
     packets_sent: Arc<AtomicU64>,
 ) {
-    let (mut tx, _) = match datalink::channel(iface, Default::default()) {
-        Ok(Ethernet(tx, rx)) => (tx, rx),
-        Ok(_) => panic!("Unknown channel type"),
-        Err(e) => panic!("Error happened {}", e),
-    };
+    let iface = plib
+        .open_interface(&config.iface_name)
+        .expect("Could not open network interface");
 
     let num_dest = destinations.len();
     let mut buffers: Vec<[u8; TCP_SYN_PACKET_LEN]> = Vec::new();
@@ -231,8 +231,8 @@ fn stress(
 
     loop {
         for cursor in 0..num_dest {
-            // replace port field in the packet, recompute checksum
             if config.enable_spoofing {
+                // replace port field in the packet, recompute checksum
                 spoof_syn_packet(&destinations[cursor], &mut buffers[cursor]);
             } else {
                 recycle_syn_packet(
@@ -241,47 +241,12 @@ fn stress(
                     &mut buffers[cursor],
                 );
             }
-            tx.send_to(&buffers[cursor], None);
-            packets_sent.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-}
-
-fn stress_ip(config: Config, destinations: Vec<Target>, packets_sent: Arc<AtomicU64>) {
-    println!("Opening packet capturing library");
-    let lib = open_best_library().expect("Could not open any packet capturing library");
-    println!("Library opened, version is {}", lib.version());
-    println!("Opening the {} interface", config.iface_name);
-    let iface = lib
-        .open_interface(&config.iface_name)
-        .expect("Could not open network interface");
-    println!("Interface opened, data link: {}", iface.data_link());
-
-    let num_dest = destinations.len();
-    let mut buffers: Vec<[u8; TCP_SYN_PACKET_LEN]> = Vec::new();
-    for ind in 0..num_dest {
-        let mut buffer = [0u8; TCP_SYN_PACKET_LEN];
-        // building initial packet for each destination
-        build_syn_packet(&config, &destinations[ind], &mut buffer);
-        buffers.push(buffer);
-    }
-
-    loop {
-        for cursor in 0..num_dest {
-            recycle_syn_packet(
-                &config.iface_ip,
-                &destinations[cursor],
-                &mut buffers[cursor],
-            );
-            let buf = match iface.data_link() {
+            let buf = match config.datalink_type {
                 DataLink::Ethernet => &buffers[cursor],
-                // XXX: working with full packet just to throw it away is ineffecient
                 DataLink::RawIp => &buffers[cursor][ETHERNET_HEADER_LEN..],
-                _ => panic!("Unsupported datalink")
+                _ => panic!("Unsupported datalink"),
             };
-            iface
-                .send(buf)
-                .expect("Could not send packet");
+            iface.send(buf).expect("Could not send packet");
             packets_sent.fetch_add(1, Ordering::SeqCst);
         }
     }
@@ -335,28 +300,27 @@ struct Args {
     /// Note that more often than not these packets would be dropped by the network
     #[clap(long)]
     enable_spoofing: bool,
-
-    /// Sends IP packets instead of Ethernet (for VPNs)
-    #[clap(short = 'X', long)]
-    vpn: bool,
 }
 
-fn resolve_iface(args: &Args) -> (NetworkInterface, Config) {
+// XXX: it should return Result<> instead of panic
+fn resolve_iface(plib: &Box<dyn PacketLibrary>, args: &Args) -> (NetworkInterface, Config) {
     let iface_name: String = args
         .interface
         .clone()
         .or_else(|| match get_default_interface() {
             Ok(iface) => Some(iface.name),
-            // XXX: better error message
-            _ => None,
+            _ => panic!("Cannot detect default interface, use -i flag to specify it explicitly"),
         })
-        // XXX: better error message
         .unwrap();
+
+    let dlink_iface = plib
+        .open_interface(&iface_name)
+        .expect(&format!("Could not open network interface {}", iface_name));
+    let dlink_type = dlink_iface.data_link();
 
     let dinterface = get_interfaces()
         .into_iter()
         .find(|iface| iface.name == iface_name)
-        // XXX: better error message
         .unwrap();
 
     // XXX: no need to search the same thing twice
@@ -385,9 +349,13 @@ fn resolve_iface(args: &Args) -> (NetworkInterface, Config) {
             iface_name
         ));
 
-    let gateway_ip = args
+    let gateway_ip: Ipv4Addr = args
         .gateway_ip
         .clone()
+        .or_else(|| match dlink_type {
+            DataLink::RawIp => Some("0.0.0.0".parse().unwrap()),
+            _ => None,
+        })
         .or_else(|| match dinterface.gateway {
             Some(Gateway { ip_addr, .. }) => {
                 if let IpAddr::V4(ip_addr) = ip_addr {
@@ -401,9 +369,13 @@ fn resolve_iface(args: &Args) -> (NetworkInterface, Config) {
         .expect("Default gateway cannot be detected");
 
     let source_mac = interface.mac.unwrap();
-    let destination_mac = args
+    let destination_mac: MacAddr = args
         .gateway_mac
         .clone()
+        .or_else(|| match dlink_type {
+            DataLink::RawIp => Some("00:00:00:00:00:00".parse().unwrap()),
+            _ => None,
+        })
         .or_else(|| {
             let (mut tx, mut rx) = match datalink::channel(&interface, Default::default()) {
                 Ok(Ethernet(tx, rx)) => (tx, rx),
@@ -420,6 +392,7 @@ fn resolve_iface(args: &Args) -> (NetworkInterface, Config) {
         interface,
         Config {
             iface_name,
+            datalink_type: dlink_type,
             iface_ip,
             gateway_ip,
             src_mac: source_mac,
@@ -442,34 +415,36 @@ fn main() {
     "
     );
 
+    let plib = open_best_library().expect("Could not open any packet capturing library");
+    println!("Loaded {}", plib.version());
     print!("Preparing config...");
     stdout().flush().unwrap();
 
-    let (interface, config) = resolve_iface(&args);
-    let is_vpn = args.vpn;
+    let (_, config) = resolve_iface(&plib, &args);
 
     println!(" DONE");
     println!(
-        "Source:\n  iface {}\n  inet {}\n  gw {}\n  ether {}\n  dest {}\n",
-        config.iface_name, config.iface_ip, config.gateway_ip, config.src_mac, config.dest_mac,
+        "Source:\n  iface {} ({})\n  inet {}\n  gw {}\n  ether {}\n  dest {}\n",
+        config.iface_name,
+        config.datalink_type,
+        config.iface_ip,
+        config.gateway_ip,
+        config.src_mac,
+        config.dest_mac,
     );
 
     let packets_sent = Arc::new(AtomicU64::new(0));
 
     let mut handles = Vec::new();
     let num_workers = args.sender_threads.unwrap_or(1);
-    let interface = Arc::new(interface);
+    let plib = Arc::new(plib);
     for _ in 0..num_workers {
-        let interface = Arc::clone(&interface);
         let packets_sent = Arc::clone(&packets_sent);
+        let plib = Arc::clone(&plib);
         let config = config.clone();
         let targets = args.target.clone();
         handles.push(thread::spawn(move || {
-            if is_vpn {
-                stress_ip(config, targets, packets_sent);
-            } else {
-                stress(&interface, config, targets, packets_sent);
-            }
+            stress_ip(&plib, config, targets, packets_sent);
         }));
     }
 

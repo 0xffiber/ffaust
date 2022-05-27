@@ -44,9 +44,10 @@ $ target/release/ffaust 169.172.1.1:80 10.0.1.5:443
 / /_/ />  </ __/ __/  / __/ /_/ / /_/ (__  ) /_
 \____/_/|_/_/ /_/    /_/  \__,_/\__,_/____/\__/
 
+Loaded  pcap libpcap version 1.9.1
 Preparing config... DONE
 Source:
-  iface eth0
+  iface eth0 (ethernet)
   inet 10.0.0.6
   gw 10.0.0.1
   ether 00:00:00:9a:5f:55
@@ -60,6 +61,8 @@ Source:
 ```
 
 To get max performance make sure to properly set number of sender threads (typically number of cores - 2).
+
+To make it work over VPN connection, just specify corresponding interface, e.g. `-i ipsec0`. `ffaust` automatically detects when it needs to use IP packets instead of Ethernet.
 
 Full list of options:
 
@@ -93,7 +96,7 @@ The tool makes an attempt to identify default interface to run the attack. If th
 
 In you have multiple interfaces with external connectivity, you can specify all of them (comma-separated).
 
-Destination MAC is resolved once before launching the attack (using ARP protocol).
+Destination MAC is resolved once before launching the attack (using ARP protocol) only when Ethernet datalink is used.
 
 Full ethernet packet for each (source -> destination) pair is generated only once. Each of the following packets is created by mutating only a few bytes in the payload (and recomputing TCP header checksum).
 
