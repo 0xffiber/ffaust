@@ -444,7 +444,9 @@ fn main() {
 
     // read configuration from flags
     let args = Args::parse();
+    // resolve interface and corresponing gateway
     let config = resolve_iface(&plib, &args);
+    // read target configuration from STDIN (if any)
     let mut stdin_targets = read_targets_from_stdin();
 
     println!(" DONE");
@@ -456,8 +458,7 @@ Source:
   gw {}
   ether {}
   dest {}
-
-Launching packets...",
+",
         config.iface_name,
         config.datalink_type,
         config.iface_ip,
@@ -474,6 +475,9 @@ Launching packets...",
     let plib = Arc::new(plib);
     let mut targets: Vec<SocketAddrV4> = args.target.into_iter().map(|addr| addr.0).collect();
     targets.append(&mut stdin_targets);
+
+    println!("Calibrated: {} targets\nLaunching packets...", targets.len());
+
     for _ in 0..num_workers {
         let packets_sent = Arc::clone(&packets_sent);
         let plib = Arc::clone(&plib);
