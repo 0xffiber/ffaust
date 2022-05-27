@@ -21,7 +21,7 @@ use rawsock::traits::Library as PacketLibrary;
 use rawsock::{open_best_library, DataLink, Error as PacketError};
 
 use std::error::Error;
-use std::io::{stdout, Write};
+use std::io::{self, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -29,11 +29,12 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use url::Url;
+
 const ETHERNET_HEADER_LEN: usize = 14;
 const ETHERNET_ARP_PACKET_LEN: usize = 42;
 const IPV4_HEADER_LEN: usize = 20;
 const TCP_SYN_PACKET_LEN: usize = 66;
-
 const NO_SPACE_ERR: &str = "send: No buffer space available";
 
 #[derive(Debug, Clone)]
@@ -304,6 +305,30 @@ struct Args {
     enable_spoofing: bool,
 }
 
+fn read_targets_from_stdin() -> Vec<SocketAddrV4> {
+    let stdin = io::stdin();
+    let mut stdin_targets: Vec<SocketAddrV4> = Vec::new();
+    let mut line = String::new();
+    loop {
+        if let Ok(n) = stdin.read_line(&mut line) {
+            if n == 0 {
+                break;
+            } else {
+                let url = Url::parse(&line).unwrap();
+                // XXX: resolve when necessary
+                // XXX: this also could be just a pair of IP:PORT
+                stdin_targets.push(SocketAddrV4::new(
+                    url.host_str().unwrap().parse().unwrap(),
+                    url.port().unwrap(),
+                ));
+            }
+        } else {
+            break;
+        }
+    }
+    stdin_targets
+}
+
 // XXX: it should return Result<> instead of panic
 fn resolve_iface(plib: &Box<dyn PacketLibrary>, args: &Args) -> Config {
     let iface_name: String = args
@@ -402,8 +427,6 @@ fn resolve_iface(plib: &Box<dyn PacketLibrary>, args: &Args) -> Config {
 }
 
 fn main() {
-    let args = Args::parse();
-
     println!(
         r"
    ____       ________   ____                 __ 
@@ -417,9 +440,12 @@ fn main() {
     let plib = open_best_library().expect("Could not open any packet capturing library");
     println!("Loaded {}", plib.version());
     print!("Preparing config...");
-    stdout().flush().unwrap();
+    io::stdout().flush().unwrap();
 
+    // read configuration from flags
+    let args = Args::parse();
     let config = resolve_iface(&plib, &args);
+    let mut stdin_targets = read_targets_from_stdin();
 
     println!(" DONE");
     println!(
@@ -439,14 +465,15 @@ Launching packets...",
         config.src_mac,
         config.dest_mac,
     );
-    stdout().flush().unwrap();
+    io::stdout().flush().unwrap();
 
     let packets_sent = Arc::new(AtomicU64::new(0));
 
     let mut handles = Vec::new();
     let num_workers = args.sender_threads.unwrap_or(1);
     let plib = Arc::new(plib);
-    let targets: Vec<SocketAddrV4> = args.target.into_iter().map(|addr| addr.0).collect();
+    let mut targets: Vec<SocketAddrV4> = args.target.into_iter().map(|addr| addr.0).collect();
+    targets.append(&mut stdin_targets);
     for _ in 0..num_workers {
         let packets_sent = Arc::clone(&packets_sent);
         let plib = Arc::clone(&plib);
