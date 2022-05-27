@@ -10,7 +10,7 @@ use default_net::interface::{get_default_interface, get_interfaces};
 use indicatif::{HumanBytes, HumanCount};
 
 use pnet::datalink::Channel::Ethernet;
-use pnet::datalink::{self, DataLinkReceiver, DataLinkSender, MacAddr, NetworkInterface};
+use pnet::datalink::{self, DataLinkReceiver, DataLinkSender, MacAddr};
 use pnet::packet::arp::{ArpHardwareTypes, ArpOperations, ArpPacket, MutableArpPacket};
 use pnet::packet::ethernet::{EtherTypes, MutableEthernetPacket};
 use pnet::packet::ip::IpNextHeaderProtocols;
@@ -310,7 +310,7 @@ struct Args {
 }
 
 // XXX: it should return Result<> instead of panic
-fn resolve_iface(plib: &Box<dyn PacketLibrary>, args: &Args) -> (NetworkInterface, Config) {
+fn resolve_iface(plib: &Box<dyn PacketLibrary>, args: &Args) -> Config {
     let iface_name: String = args
         .interface
         .clone()
@@ -395,18 +395,15 @@ fn resolve_iface(plib: &Box<dyn PacketLibrary>, args: &Args) -> (NetworkInterfac
         })
         .unwrap();
 
-    (
-        interface,
-        Config {
-            iface_name,
-            datalink_type: dlink_type,
-            iface_ip,
-            gateway_ip,
-            src_mac: source_mac,
-            dest_mac: destination_mac,
-            enable_spoofing: args.enable_spoofing,
-        },
-    )
+    Config {
+        iface_name,
+        datalink_type: dlink_type,
+        iface_ip,
+        gateway_ip,
+        src_mac: source_mac,
+        dest_mac: destination_mac,
+        enable_spoofing: args.enable_spoofing,
+    }
 }
 
 fn main() {
@@ -427,7 +424,7 @@ fn main() {
     print!("Preparing config...");
     stdout().flush().unwrap();
 
-    let (_, config) = resolve_iface(&plib, &args);
+    let config = resolve_iface(&plib, &args);
 
     println!(" DONE");
     println!(
