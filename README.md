@@ -105,4 +105,4 @@ Full ethernet packet for each (source -> destination) pair is generated only onc
 The tool is under active development:
 
 - [ ] Support IP ranges for source IP
-- [ ] Option to read config from stdin, resolve for hostnames
+- [ ] Option to read config from stdin

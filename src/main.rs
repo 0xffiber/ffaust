@@ -23,7 +23,7 @@ use rawsock::{open_best_library, DataLink};
 
 use std::error::Error;
 use std::io::{stdout, Write};
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -46,12 +46,6 @@ pub struct Config {
     pub src_mac: MacAddr,
     pub dest_mac: MacAddr,
     pub enable_spoofing: bool,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct Target {
-    addr: Ipv4Addr,
-    port: u16,
 }
 
 // XXX: it's actually MacAddr or error (i assume, should be just a Result)
@@ -124,7 +118,7 @@ fn rand_ipv4() -> Ipv4Addr {
 }
 
 // XXX: keep configuration for IP spoofing
-fn build_syn_packet(config: &Config, dest: &Target, buf: &mut [u8]) {
+fn build_syn_packet(config: &Config, dest: &SocketAddrV4, buf: &mut [u8]) {
     let iface_ip = config.iface_ip;
 
     // setup Ethernet header
@@ -146,7 +140,7 @@ fn build_syn_packet(config: &Config, dest: &Target, buf: &mut [u8]) {
         ip_header.set_total_length(52);
         ip_header.set_next_level_protocol(IpNextHeaderProtocols::Tcp);
         ip_header.set_source(iface_ip);
-        ip_header.set_destination(dest.addr);
+        ip_header.set_destination(*dest.ip());
         ip_header.set_identification(rand::random::<u16>());
         ip_header.set_ttl(64);
         ip_header.set_version(4);
@@ -162,7 +156,7 @@ fn build_syn_packet(config: &Config, dest: &Target, buf: &mut [u8]) {
             MutableTcpPacket::new(&mut buf[(ETHERNET_HEADER_LEN + IPV4_HEADER_LEN)..]).unwrap();
 
         tcp_header.set_source(rand::random::<u16>());
-        tcp_header.set_destination(dest.port);
+        tcp_header.set_destination(dest.port());
         tcp_header.set_flags(TcpFlags::SYN);
         tcp_header.set_window(65535);
         tcp_header.set_data_offset(8);
@@ -176,12 +170,12 @@ fn build_syn_packet(config: &Config, dest: &Target, buf: &mut [u8]) {
             TcpOption::wscale(6),
         ]);
 
-        let checksum = tcp::ipv4_checksum(&tcp_header.to_immutable(), &iface_ip, &dest.addr);
+        let checksum = tcp::ipv4_checksum(&tcp_header.to_immutable(), &iface_ip, dest.ip());
         tcp_header.set_checksum(checksum);
     }
 }
 
-fn spoof_syn_packet(destination: &Target, buf: &mut [u8]) {
+fn spoof_syn_packet(destination: &SocketAddrV4, buf: &mut [u8]) {
     let source_ip = rand_ipv4();
 
     // update IP header
@@ -200,7 +194,7 @@ fn spoof_syn_packet(destination: &Target, buf: &mut [u8]) {
     recycle_syn_packet(&source_ip, destination, buf);
 }
 
-fn recycle_syn_packet(iface_ip: &Ipv4Addr, destination: &Target, buf: &mut [u8]) {
+fn recycle_syn_packet(iface_ip: &Ipv4Addr, destination: &SocketAddrV4, buf: &mut [u8]) {
     // update TCP header
     {
         let mut tcp_header =
@@ -208,7 +202,7 @@ fn recycle_syn_packet(iface_ip: &Ipv4Addr, destination: &Target, buf: &mut [u8])
 
         // XXX: it's likely to be much faster to cycle over shuffle vector
         tcp_header.set_source(rand::random::<u16>());
-        let checksum = tcp::ipv4_checksum(&tcp_header.to_immutable(), iface_ip, &destination.addr);
+        let checksum = tcp::ipv4_checksum(&tcp_header.to_immutable(), iface_ip, destination.ip());
         tcp_header.set_checksum(checksum);
     }
 }
@@ -216,7 +210,7 @@ fn recycle_syn_packet(iface_ip: &Ipv4Addr, destination: &Target, buf: &mut [u8])
 fn stress_ip(
     plib: &Box<dyn PacketLibrary>,
     config: Config,
-    destinations: Vec<Target>,
+    destinations: Vec<SocketAddrV4>,
     packets_sent: Arc<AtomicU64>,
 ) {
     let iface = plib
@@ -259,17 +253,18 @@ fn stress_ip(
     }
 }
 
+#[derive(Debug, Clone)]
+struct Target(SocketAddrV4);
+
 impl FromStr for Target {
     type Err = Box<dyn Error + Send + Sync + 'static>;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let pos = s
-            .find(':')
-            .ok_or_else(|| format!("invalid target {}: use ip:port syntax", s))?;
-        Ok(Self {
-            addr: s[..pos].parse()?,
-            port: s[pos + 1..].parse()?,
+        Ok((match s.to_socket_addrs().unwrap().next().unwrap() {
+            SocketAddr::V4(addr) => Some(Self(addr)),
+            _ => None,
         })
+        .ok_or_else(|| format!("invalid target format {}", s))?)
     }
 }
 
@@ -277,6 +272,7 @@ impl FromStr for Target {
 #[clap(author, version, about, long_about = None)]
 struct Args {
     /// ip:port pair to stress out
+    #[clap(parse(try_from_str))]
     target: Vec<Target>,
 
     /// Threads used to send packets  (default=1)
@@ -451,11 +447,12 @@ Launching packets...",
     let mut handles = Vec::new();
     let num_workers = args.sender_threads.unwrap_or(1);
     let plib = Arc::new(plib);
+    let targets: Vec<SocketAddrV4> = args.target.into_iter().map(|addr| addr.0).collect();
     for _ in 0..num_workers {
         let packets_sent = Arc::clone(&packets_sent);
         let plib = Arc::clone(&plib);
         let config = config.clone();
-        let targets = args.target.clone();
+        let targets = targets.clone();
         handles.push(thread::spawn(move || {
             stress_ip(&plib, config, targets, packets_sent);
         }));
