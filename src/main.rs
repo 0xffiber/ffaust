@@ -249,7 +249,6 @@ fn stress_ip(
                 DataLink::RawIp => &buffers[cursor][ETHERNET_HEADER_LEN..],
                 _ => panic!("Unsupported datalink"),
             };
-            // iface.send(buf).expect("Could not send packet");
             if let Err(PacketError::SendingPacket(msg)) = iface.send(buf) {
                 if NO_SPACE_ERR.ne(&msg) {
                     panic!("Packets sending failed: {}", msg);
