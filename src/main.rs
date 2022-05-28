@@ -195,6 +195,18 @@ fn spoof_syn_packet(destination: &SocketAddrV4, buf: &mut [u8]) {
 }
 
 fn recycle_syn_packet(iface_ip: &Ipv4Addr, destination: &SocketAddrV4, buf: &mut [u8]) {
+    // update IP header
+    {
+        let mut ip_header = MutableIpv4Packet::new(
+            &mut buf[ETHERNET_HEADER_LEN..(ETHERNET_HEADER_LEN + IPV4_HEADER_LEN)],
+        )
+        .unwrap();
+        ip_header.set_identification(rand::random::<u16>());
+
+        let checksum = ipv4::checksum(&ip_header.to_immutable());
+        ip_header.set_checksum(checksum);
+    }
+
     // update TCP header
     {
         let mut tcp_header =
