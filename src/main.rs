@@ -313,11 +313,11 @@ struct Args {
 
     /// Enable random source address (IPv4) spoofing. Disabled by default.
     /// Note that more often than not these packets would be dropped by the network
-    #[clap(long, parse(try_from_str))]
+    #[clap(long)]
     enable_spoofing: bool,
 
     /// Read target configuration from STDIN
-    #[clap(long, parse(try_from_str))]
+    #[clap(long)]
     input: bool,
 }
 
