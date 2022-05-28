@@ -313,8 +313,12 @@ struct Args {
 
     /// Enable random source address (IPv4) spoofing. Disabled by default.
     /// Note that more often than not these packets would be dropped by the network
-    #[clap(long)]
+    #[clap(long, parse(try_from_str))]
     enable_spoofing: bool,
+
+    /// Read target configuration from STDIN
+    #[clap(long, parse(try_from_str))]
+    input: bool,
 }
 
 fn read_targets_from_stdin() -> Vec<SocketAddrV4> {
@@ -459,7 +463,11 @@ fn main() {
     // resolve interface and corresponing gateway
     let config = resolve_iface(&plib, &args);
     // read target configuration from STDIN (if any)
-    let mut stdin_targets = read_targets_from_stdin();
+    let mut stdin_targets = if args.input {
+        read_targets_from_stdin()
+    } else {
+        Vec::new()
+    };
 
     println!(" DONE");
     println!(
